@@ -1,10 +1,16 @@
 {
   "name": "midiconvert",
-  "version": "0.4.0",
+  "version": "0.4.3",
   "description": "Convert binary midi into Tone.js-friendly JSON",
   "main": "build/MidiConvert.js",
+  "module": "src/MidiConvert.js",
+  "types": "src/MidiConvert.d.ts",
   "scripts": {
-    "test": "cd test && mocha test.js"
+    "clean": "rm -rf ./build/*; mkdir -p ./build/",
+    "pretest": "yarn run clean; $( yarn bin )/webpack",
+    "test": "$( yarn bin )/nyc $( yarn bin )/mocha ./test/test.js",
+    "posttest": "$( yarn bin )/nyc report --reporter=json && $( yarn bin )/codecov -f coverage/*.json",
+    "build": "yarn run clean; $( yarn bin )/webpack -p"
   },
   "repository": {
     "type": "git",
@@ -16,14 +22,18 @@
     "url": "https://github.com/Tonejs/MidiConvert/issues"
   },
   "homepage": "https://tonejs.github.com/MidiConvert/",
-  "devDependencies": {
-    "chai": "^3.3.0",
-    "midi-file-parser": "^1.0.0",
+  "dependencies": {
     "jsmidgen": "^0.1.5",
-    "mocha": "^2.3.3",
-    "webpack": "^1.12.2",
+    "midi-file-parser": "^1.0.0"
+  },
+  "devDependencies": {
     "babel-core": "^6.17.0",
-    "babel-loader": "^6.2.5",
-    "babel-preset-es2015": "^6.16.0"
+    "babel-loader": "7",
+    "babel-preset-es2015": "6.24.1",
+    "chai": "^3.3.0",
+    "codecov": "^1.0.1",
+    "mocha": "^3.2.0",
+    "nyc": "^10.0.0",
+    "webpack": "2"
   }
 }

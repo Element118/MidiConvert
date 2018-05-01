@@ -1,6 +1,6 @@
-import Decoder from 'midi-file-parser'
-import Encoder from 'jsmidgen'
-import Util from './Util'
+import * as Decoder from 'midi-file-parser'
+import * as Encoder from 'jsmidgen'
+import * as Util from './Util'
 import {Track} from './Track'
 import {parseHeader} from './Header'
 
@@ -8,6 +8,24 @@ import {parseHeader} from './Header'
  * @class The Midi object. Contains tracks and the header info.
  */
 class Midi {
+	/**
+	 * Convert JSON to Midi object
+	 * @param {object} json
+	 * @static
+	 * @returns {Midi}
+	 */
+	static fromJSON(json){
+		var midi = new Midi()
+
+		midi.header = json.header
+		json.tracks.forEach((track) => {
+			var newTrack = Track.fromJSON(track)
+			midi.tracks.push(newTrack)
+		})
+
+		return midi
+	}
+	
 	constructor(){
 
 		this.header = {
@@ -22,10 +40,10 @@ class Midi {
 
 	/**
 	 * Load the given url and parse the midi at that url
-	 * @param  {String}   url  
+	 * @param  {String}   url
 	 * @param {*} data Anything that should be sent in the XHR
-	 * @param {String} method Either GET or POST    
-	 * @return {Promise}            
+	 * @param {String} method Either GET or POST
+	 * @return {Promise}
 	 */
 	load(url, data=null, method='GET'){
 		return new Promise((success, fail) => {
@@ -42,7 +60,9 @@ class Midi {
 			})
 			request.addEventListener('error', fail)
 			request.send(data)
-		})
+		}).catch(function(error) {
+				console.log(error);
+			});
 	}
 
 	/**
@@ -58,15 +78,16 @@ class Midi {
 		}
 
 		const midiData = Decoder(bytes)
-		
+
 		this.header = parseHeader(midiData)
 
 		//replace the previous tracks
 		this.tracks = []
 
-		midiData.tracks.forEach((trackData) => {
+		midiData.tracks.forEach((trackData, i) => {
 
 			const track = new Track()
+			track.id = i
 			this.tracks.push(track)
 
 			let absoluteTime = 0
@@ -76,15 +97,28 @@ class Midi {
 					track.name = Util.cleanName(event.text)
 				} else if (event.subtype === 'noteOn'){
 					track.noteOn(event.noteNumber, absoluteTime, event.velocity / 127)
+
+					if (track.channelNumber === -1) {
+						track.channelNumber = event.channel
+					}
 				} else if (event.subtype === 'noteOff'){
 					track.noteOff(event.noteNumber, absoluteTime)
 				} else if (event.subtype === 'controller' && event.controllerType){
 					track.cc(event.controllerType, absoluteTime, event.value / 127)
 				} else if (event.type === 'meta' && event.subtype === 'instrumentName'){
 					track.instrument = event.text
+				} else if (event.type === 'channel' && event.subtype === 'programChange'){
+					track.patch(event.programNumber)
+					track.channelNumber = event.channel
 				}
 			})
+
+			//if the track is empty, then it is the file name
+			if (!this.header.name && !track.length && track.name) {
+				this.header.name = track.name;
+			}
 		})
+
 		return this
 	}
 
@@ -97,25 +131,69 @@ class Midi {
 			ticks : this.header.PPQ
 		})
 
-		this.tracks.forEach((track, i) => {
+		const firstEmptyTrack = this.tracks.filter(track => !track.length)[0];
+
+		if (this.header.name && !(firstEmptyTrack && firstEmptyTrack.name === this.header.name)) {
+			const track = output.addTrack()
+			track.addEvent(
+				new Encoder.MetaEvent({
+					time: 0,
+					type: Encoder.MetaEvent.TRACK_NAME,
+					data: this.header.name
+				})
+			)
+		}
+
+		this.tracks.forEach((track) => {
 			const trackEncoder = output.addTrack()
 			trackEncoder.setTempo(this.bpm)
+
+			if (track.name) {
+				trackEncoder.addEvent(
+					new Encoder.MetaEvent({
+						time: 0,
+						type: Encoder.MetaEvent.TRACK_NAME,
+						data: track.name
+					})
+				)
+			}
+
 			track.encode(trackEncoder, this.header)
 		})
 		return output.toBytes()
 	}
 
 	/**
-	 * Conver the output encoding into a Uint8Array
-	 * @return {Uint9Array} [description]
+	 * Convert the output encoding into an Array
+	 * @return {Array}
 	 */
-	toUint8Array(){
+	toArray(){
 		const encodedStr = this.encode()
-		const buffer = new Uint8Array(encodedStr.length)
+		const buffer = new Array(encodedStr.length)
 		for (let i = 0; i < encodedStr.length; i++){
 			buffer[i] = encodedStr.charCodeAt(i)
 		}
 		return buffer
+	}
+
+	/**
+	 *  Convert all of the fields to JSON
+	 *  @return  {Object}
+	 */
+	toJSON(){
+		const ret = {
+			header: this.header,
+			startTime: this.startTime,
+			duration: this.duration,
+			tracks: (this.tracks || []).map(
+				track => track.toJSON()
+			)
+		}
+
+		if (!ret.header.name)
+			ret.header.name = ''
+
+		return ret
 	}
 
 	/**
@@ -162,7 +240,11 @@ class Midi {
 	 */
 	get startTime(){
 		const startTimes = this.tracks.map((t) => t.startTime)
-		return Math.min.apply(Math, startTimes)
+
+		if (!startTimes.length)
+			return 0
+
+		return Math.min.apply(Math, startTimes) || 0
 	}
 
 	/**
@@ -189,16 +271,20 @@ class Midi {
 		return this.header.timeSignature
 	}
 	set timeSignature(timeSig){
-		this.header.timeSignature = timeSignature
+		this.header.timeSignature = timeSig
 	}
 
-	/** 
+	/**
 	 * The duration is the end time of the longest track
 	 * @type {Number}
 	 */
 	get duration(){
 		const durations = this.tracks.map((t) => t.duration)
-		return Math.max.apply(Math, durations)
+
+		if (!durations.length)
+			return 0
+
+		return Math.max.apply(Math, durations) || 0
 	}
 }
 

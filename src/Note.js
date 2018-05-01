@@ -1,14 +1,23 @@
-import Util from './Util'
+import * as Util from './Util'
 
 class Note{
+	/**
+	 * Convert JSON to Note object
+	 * @param {object} json
+	 * @static
+	 * @returns {Note}
+	 */
+	static fromJSON(json) {
+		var note = new Note(json.midi, json.time, json.duration, json.velocity)
+		return note
+	}
+	
 	constructor(midi, time, duration=0, velocity=1){
 
 		/**
 		 * The MIDI note number
 		 * @type {Number}
 		 */
-		this.midi;
-
 		if (Util.isNumber(midi)){
 			this.midi = midi
 		} else if (Util.isPitch(midi)){
